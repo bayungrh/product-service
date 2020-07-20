@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: SERVICE_NAME
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      name: SERVICE_NAME
+  template:
+    metadata:
+      name: SERVICE_NAME
+      labels:
+        name: SERVICE_NAME
+    spec:
+      containers:
+        - name: SERVICE_NAME
+          image: IMAGE_SERVICE
+          ports:
+            - containerPort: 3000
+      imagePullSecrets:
+        - name: registry-bayun-docker-registry
+  
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: SERVICE_NAME
+spec:
+  selector:
+    name: SERVICE_NAME
+  ports:
+    - port: 3000
+      targetPort: 3000
