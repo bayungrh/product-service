@@ -196,6 +196,7 @@ pipeline {
 										}
 
 										echo "${serviceName}-${branchName}"
+										
 										sh '''
 											chmod +x ./modification-yaml.sh
 											./modification-yaml.sh ${serviceName}-${branchName} ${ecrUri}/${serviceName}:${serverEnv} production
