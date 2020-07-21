@@ -108,7 +108,7 @@ pipeline {
 						}
 				}
 		}
-    stage('Deploy Production') {
+    stage('Deploy') {
       when {
 					expression {
 							currentBuild.result == 'SUCCESS'
@@ -119,34 +119,29 @@ pipeline {
           try {
 							if(env.serverEnv == 'alpha') {
 								echo "${serviceName}-${branchName}"
-								// sh "./modification-yaml.sh ${serviceName}-${branchName} ${prefixGw} ${ecrUri}/${serviceName}:${tagVersion} alpha ${serviceName}-worker-${branchName}"
-								// sh '''
-								// 	kubectl apply -f kube-yaml/deployment.yaml -n alpha
-								// '''
-							} else if (env.serverEnv == 'production') {
-								echo "${serviceName}-${branchName}"
-								sh "./modification-yaml.sh ${serviceName}-${branchName} ${ecrUri}/${serviceName}:${serverEnv} production"
+								sh "./modification-yaml.sh ${serviceName}-${branchName} ${ecrUri}/${serviceName}:${serverEnv} alpha"
 								sh '''
 									kubectl apply -f /var/lib/jenkins/.kube/kube-template/gateway-ingress.yaml
 									doctl registry kubernetes-manifest | kubectl apply -f -
 									kubectl apply -f kube-yaml/deployment.yaml -n default
 								'''
-									// try {
-									// 		timeout(time: 1, unit: 'DAYS') {
-									// 				env.userChoice = input message: 'Do you want to Release this build?',
-									// 				parameters: [choice(name: 'Versioning Service', choices: 'no\nyes', description: 'Choose "yes" if you want to release this build')]
-									// 		}
-									// 		if (userChoice == 'no') {
-									// 				echo "User refuse to release this build, stopping...."
-									// 		}
-									// } catch(Exception err) {
-									// 		def user = err.getCauses()[0].getUser()
-									// 		if('SYSTEM' == user.toString()) {
-									// 				echo "timeout reason"
-									// 		} else {
-									// 				echo "Aborted by: [${user}]"
-									// 		}
-									// }
+							} else if (env.serverEnv == 'production') {
+									try {
+											timeout(time: 1, unit: 'DAYS') {
+													env.userChoice = input message: 'Do you want to Release this build?',
+													parameters: [choice(name: 'Versioning Service', choices: 'no\nyes', description: 'Choose "yes" if you want to release this build')]
+											}
+											if (userChoice == 'no') {
+													echo "User refuse to release this build, stopping...."
+											}
+									} catch(Exception err) {
+											def user = err.getCauses()[0].getUser()
+											if('SYSTEM' == user.toString()) {
+													echo "timeout reason"
+											} else {
+													echo "Aborted by: [${user}]"
+											}
+									}
 							}
 
 							currentBuild.result == "SUCCESS"
@@ -161,6 +156,65 @@ pipeline {
         }
       }
     }
+		stage ('Release') {
+				when {
+						BRANCH_NAME ==~ /(master)/
+						environment name: 'userChoice', value: 'yes'
+				}
+				steps {
+						script {
+								try {
+										timeout(time: 1, unit: 'DAYS') {
+												env.releaseVersion = input (
+															id: 'version', message: 'Input version name, example 1.0.0', parameters: [
+																[$class: 'StringParameterDefinition', description: 'Whatever you type here will be your version', name: 'Version']
+														]
+												)
+										}
+										releaseTag = sh (
+												script: "echo \"$tagVersion\" | sed 's|${buildEnv}|${releaseVersion}|g'",
+												returnStdout: true
+										).trim()
+
+										echo "${gitRepo}"
+
+										docker.build("${serviceName}")
+										imageNameTag = "${ecrUri}/${serviceName}:${releaseTag}"
+										sh "docker tag ${serviceName} ${imageNameTag}"
+										sh "docker push ${imageNameTag}"
+
+										withCredentials([string(credentialsId: 'blueoceanTokenGithub', variable: 'tokenGit')]) {
+												sh("git tag -a ${releaseTag} -m 'Release ${releaseTag}'")
+												sh("git push https://${tokenGit}@${gitRepo} --tags")
+										}
+
+										echo "${serviceName}-${branchName}"
+										sh "./modification-yaml.sh ${serviceName}-${branchName} ${ecrUri}/${serviceName}:${serverEnv} production"
+										sh '''
+											kubectl apply -f /var/lib/jenkins/.kube/kube-template/gateway-ingress.yaml
+											doctl registry kubernetes-manifest | kubectl apply -f -
+											kubectl apply -f kube-yaml/deployment.yaml -n default
+										'''
+										sh '''
+												imageToDelete_rimg=\$(docker images -q ${imageNameTag} | uniq)
+														if [[ \${imageToDelete_rimg[@]} ]]; then
+																if [[ \${imageToDelete_rimg} != [] ]]; then
+																		docker rmi -f \$imageToDelete_rimg
+																fi
+														fi
+										'''
+										currentBuild.result == "SUCCESS"
+								} catch (e) {
+										currentBuild.result == "FAILURE"
+										throw e
+								} finally {
+										if (currentBuild.result == "FAILURE") {
+											notifyBuild(currentBuild.result)
+										}
+								}
+						}
+				}
+		}
     stage('Clean') {
       steps {
         echo 'clean'
