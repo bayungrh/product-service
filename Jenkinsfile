@@ -36,7 +36,7 @@ pipeline {
         serviceName = "${JOB_NAME}".split('/').first()
 				serverEnv = getEnvFromBranch(env.BRANCH_NAME)
         ecrUri = 'registry.digitalocean.com/bayun-docker-registry'
-        gitRepo = "github.com/muhbayu/${serviceName}.git"
+        gitRepo = "github.com/MuhBayu/${serviceName}.git"
         gitCommitHash = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
         shortCommitHash = gitCommitHash.take(7)
     }
@@ -119,7 +119,12 @@ pipeline {
           try {
 							if(env.serverEnv == 'alpha') {
 								echo "${serviceName}-${branchName}"
-								sh "./modification-yaml.sh ${serviceName}-${branchName} ${ecrUri}/${serviceName}:${serverEnv} alpha"
+
+								imageNameTag = "${ecrUri}/${serviceName}:${tagVersion}"
+								sh "docker tag ${serviceName} ${imageNameTag}"
+								sh "docker push ${imageNameTag}"
+
+								sh "./modification-yaml.sh ${serviceName}-${branchName} ${imageNameTag} alpha"
 								sh '''
 									kubectl apply -f /var/lib/jenkins/.kube/kube-template/gateway-ingress.yaml
 									doctl registry kubernetes-manifest | kubectl apply -f -
@@ -158,7 +163,6 @@ pipeline {
     }
 		stage ('Release') {
 				when {
-						BRANCH_NAME ==~ /(master)/
 						environment name: 'userChoice', value: 'yes'
 				}
 				steps {
@@ -185,7 +189,7 @@ pipeline {
 
 										withCredentials([string(credentialsId: 'blueoceanTokenGithub', variable: 'tokenGit')]) {
 												sh("git tag -a ${releaseTag} -m 'Release ${releaseTag}'")
-												sh("git push https://${tokenGit}@${gitRepo} --tags")
+												sh("git push https://${tokenGit}@${gitRepo} --tags -f")
 										}
 
 										echo "${serviceName}-${branchName}"
@@ -194,14 +198,6 @@ pipeline {
 											kubectl apply -f /var/lib/jenkins/.kube/kube-template/gateway-ingress.yaml
 											doctl registry kubernetes-manifest | kubectl apply -f -
 											kubectl apply -f kube-yaml/deployment.yaml -n default
-										'''
-										sh '''
-												imageToDelete_rimg=\$(docker images -q ${imageNameTag} | uniq)
-														if [[ \${imageToDelete_rimg[@]} ]]; then
-																if [[ \${imageToDelete_rimg} != [] ]]; then
-																		docker rmi -f \$imageToDelete_rimg
-																fi
-														fi
 										'''
 										currentBuild.result == "SUCCESS"
 								} catch (e) {
@@ -215,9 +211,22 @@ pipeline {
 						}
 				}
 		}
+		
     stage('Clean') {
       steps {
         echo 'clean'
+				script {
+					try {
+						sh 'docker images -q -f dangling=true | xargs --no-run-if-empty docker rmi'
+					} catch (e) {
+						currentBuild.result == "FAILURE"
+						throw e
+					} finally {
+						if (currentBuild.result == "FAILURE") {
+							notifyBuild(currentBuild.result)
+						}
+					}
+				}
       }
     }
   }
