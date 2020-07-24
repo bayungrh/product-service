@@ -138,6 +138,7 @@ pipeline {
 								sh "docker tag ${serviceName} ${imageNameTag}"
 								sh "docker push ${imageNameTag}"
 
+								sh "chmod +x ./modification-yaml.sh"
 								sh "./modification-yaml.sh ${serviceName}-${branchName} ${imageNameTag} alpha"
 								sh '''
 									kubectl apply -f /var/lib/jenkins/.kube/kube-template/gateway-ingress.yaml
@@ -207,6 +208,8 @@ pipeline {
 										}
 
 										echo "${serviceName}-${branchName}"
+
+										sh "chmod +x ./modification-yaml.sh"
 										sh "./modification-yaml.sh ${serviceName}-${branchName} ${ecrUri}/${serviceName}:${serverEnv} production"
 										sh '''
 											kubectl apply -f /var/lib/jenkins/.kube/kube-template/gateway-ingress.yaml
