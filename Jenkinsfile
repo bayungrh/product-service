@@ -1,49 +1,50 @@
 def notifyBuild(String buildStatus = 'STARTED') {
-    // build status of null means successful
-    buildStatus =  buildStatus ?: 'SUCCESS'
+		// build status of null means successful
+		buildStatus =  buildStatus ?: 'SUCCESS'
 
-    // Default values
-    def colorName = 'RED'
-    def colorCode = '#FF0000'
-    def subject = "${buildStatus}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'"
-    def summary = "${subject} (${env.BUILD_URL})"
+		// Default values
+		def colorName = 'RED'
+		def colorCode = '#FF0000'
+		def subject = "${buildStatus}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'"
+		def summary = "${subject} (${env.BUILD_URL})"
 
-    // Override default values based on build status
-    if (buildStatus == 'STARTED') {
-      color = 'YELLOW'
-      colorCode = '#FFFF00'
-    } else if (buildStatus == 'SUCCESS') {
-      color = 'GREEN'
-      colorCode = '#00FF00'
-    } else {
-      color = 'RED'
-      colorCode = '#FF0000'
-    }
+		// Override default values based on build status
+		if (buildStatus == 'STARTED') {
+			color = 'YELLOW'
+			colorCode = '#FFFF00'
+		} else if (buildStatus == 'SUCCESS') {
+			color = 'GREEN'
+			colorCode = '#00FF00'
+		} else {
+			color = 'RED'
+			colorCode = '#FF0000'
+		}
 }
 def getEnvFromBranch(branch) {
-  if (branch == 'master') {
-    return 'production'
-  } else if (branch == 'develop') {
-    return 'alpha'
+	if (branch == 'master') {
+		return 'production'
+	} else if (branch == 'develop') {
+		return 'alpha'
  } else {
 	 return 'build not allowed in this branch'
  }
 }
 
 pipeline {
-  agent any
-    environment {
-        serviceName = "${JOB_NAME}".split('/').first()
+	agent any
+		environment {
+				serviceName = "${JOB_NAME}".split('/').first()
 				serverEnv = getEnvFromBranch(env.BRANCH_NAME)
-        ecrUri = 'registry.digitalocean.com/bayun-docker-registry'
-        gitRepo = "github.com/MuhBayu/${serviceName}.git"
-        gitCommitHash = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
-        shortCommitHash = gitCommitHash.take(7)
-    }
-  stages {
+				ecrUri = 'registry.digitalocean.com/bayun-docker-registry'
+				gitRepo = "github.com/MuhBayu/${serviceName}.git"
+				gitCommitHash = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+				shortCommitHash = gitCommitHash.take(7)
+		}
+	stages {
 		stage ('Build preparations') {
 				parallel {
 						stage ('Env') {
+								when { anyOf { branch 'master'; branch 'develop' } }
 								steps {
 										script {
 											notifyBuild('STARTED')
@@ -65,6 +66,7 @@ pipeline {
 								}
 						}
 						stage ('Build Docker') {
+								when { anyOf { branch 'master'; branch 'develop' } }
 								steps {
 										script {
 												try {
@@ -108,15 +110,27 @@ pipeline {
 						}
 				}
 		}
-    stage('Deploy') {
-      when {
+		stage ('Unit Test') {
+				when {
+						expression {
+								currentBuild.result == 'SUCCESS'
+						}
+				}
+				steps {
+						script {
+							echo "Unit Test Passed"
+						}
+				}
+		}
+		stage('Deploy') {
+			when {
 					expression {
 							currentBuild.result == 'SUCCESS'
 					}
 			}
-      steps {
-        script {
-          try {
+			steps {
+				script {
+					try {
 							if(env.serverEnv == 'alpha') {
 								echo "${serviceName}-${branchName}"
 
@@ -124,7 +138,6 @@ pipeline {
 								sh "docker tag ${serviceName} ${imageNameTag}"
 								sh "docker push ${imageNameTag}"
 
-								sh "chmod +x ./modification-yaml.sh"
 								sh "./modification-yaml.sh ${serviceName}-${branchName} ${imageNameTag} alpha"
 								sh '''
 									kubectl apply -f /var/lib/jenkins/.kube/kube-template/gateway-ingress.yaml
@@ -159,9 +172,9 @@ pipeline {
 								notifyBuild(currentBuild.result)
 							}
 					}
-        }
-      }
-    }
+				}
+			}
+		}
 		stage ('Release') {
 				when {
 						environment name: 'userChoice', value: 'yes'
@@ -189,13 +202,11 @@ pipeline {
 										sh "docker push ${imageNameTag}"
 
 										withCredentials([string(credentialsId: 'blueoceanTokenGithub', variable: 'tokenGit')]) {
-												sh("git tag -a ${releaseTag} -m 'Release ${releaseTag}'")
-												sh("git push https://${tokenGit}@${gitRepo} --tags -f")
+												sh("git tag ${releaseTag} -m 'Release ${releaseTag}'")
+												sh("git push https://${tokenGit}@${gitRepo} ${releaseTag}")
 										}
 
 										echo "${serviceName}-${branchName}"
-
-										sh "chmod +x ./modification-yaml.sh"
 										sh "./modification-yaml.sh ${serviceName}-${branchName} ${ecrUri}/${serviceName}:${serverEnv} production"
 										sh '''
 											kubectl apply -f /var/lib/jenkins/.kube/kube-template/gateway-ingress.yaml
@@ -215,9 +226,9 @@ pipeline {
 				}
 		}
 		
-    stage('Clean') {
-      steps {
-        echo 'clean'
+		stage('Clean') {
+			steps {
+				echo 'clean'
 				script {
 					try {
 						sh 'docker images -q -f dangling=true | xargs --no-run-if-empty docker rmi'
@@ -230,7 +241,7 @@ pipeline {
 						}
 					}
 				}
-      }
-    }
-  }
+			}
+		}
+	}
 }
